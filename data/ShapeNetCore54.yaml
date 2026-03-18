@@ -1,0 +1,4 @@
+NAME: ShapeNetCore
+DATA_PATH: data/shapenetcore54_normal_resampled
+NUM_CATEGORY: 54
+USE_NORMALS: FALSE

@@ -1,0 +1,20 @@
+{
+    "ShapeNetCore54": {
+        "config": "./data/ShapeNetCore54.yaml",
+        "train": "train",
+        "test": "test",
+        "usage": "test"
+    },
+    "ModelNet40": {
+        "config": "./data/ModelNet40.yaml",
+        "train": "train",
+        "test": "test",
+        "usage": "test"
+    },
+    "ScanObjectNN15": {
+        "config": "./data/ScanObjectNN15.yaml",
+        "train": "train",
+        "test": "test",
+        "usage": "test"
+    }
+}

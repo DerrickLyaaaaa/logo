@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# OS / editor
+.DS_Store
+
+# Runtime outputs
+outputs/
+logs*/
+*.log
+
+# Large checkpoints
+*.pt
+*.pth
+*.bin
+
+# Large dataset binaries
+*.dat
+
+# Optional local env
+.venv/
+venv/
