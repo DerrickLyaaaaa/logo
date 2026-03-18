@@ -140,6 +140,10 @@ python main_logofuse.py \
 
 ## 7) Repro tips
 
-- Keep `--fewshot_seed 0` and fixed config for strict reproducibility.
-- If metrics drift, clear `outputs/feature_cache_logofuse` and rerun.
+- Use fixed seeds and solver for paper runs:
+  - `--seed 0`
+  - `--fewshot_seed 0`
+  - `--fewshot_weight_solver map`
+- Use `--rebuild_feature_cache` to force cache rebuild each run (recommended for strict reproducibility).
+- The provided `tools/run_*` scripts already include fixed seed + map solver + cache rebuild.
 - Keep each run directory name (`logs_*_YYYYmmdd_HHMMSS`) for paper tables.

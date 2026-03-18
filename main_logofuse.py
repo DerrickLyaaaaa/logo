@@ -52,6 +52,8 @@ def get_args_parser():
     # LoGo-Fuse args.
     parser.add_argument('--method', default='logofuse', choices=['logofuse', 'gsp', 'gsp_ot'])
     parser.add_argument('--cache_features', action='store_true', help='cache ULIP point features to .npz')
+    parser.add_argument('--rebuild_feature_cache', action='store_true',
+                        help='force rebuild feature cache files for this run (ignore existing .npz)')
     parser.add_argument('--feature_cache_dir', default='./outputs/feature_cache', type=str)
     parser.add_argument('--save_scores', default='', type=str, help='optional .npz path for final scores')
     parser.add_argument('--scanobject_train_dat', default='', type=str,
@@ -988,6 +990,11 @@ def _extract_or_load_features(model, data_loader, device, args, split_tag='test'
     if args.cache_features:
         os.makedirs(args.feature_cache_dir, exist_ok=True)
         cache_path = _cache_file_path(args, split_tag=split_tag)
+        if bool(getattr(args, 'rebuild_feature_cache', False)) and os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+            except OSError:
+                pass
         if os.path.exists(cache_path):
             data = np.load(cache_path)
             geo_desc = data['geo_desc'] if ('geo_desc' in data.files and bool(getattr(args, 'use_geo_signal', False))) else None

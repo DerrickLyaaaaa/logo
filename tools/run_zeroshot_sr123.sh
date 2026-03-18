@@ -21,9 +21,11 @@ COMMON=(
   --validate_dataset_prompt shapenet_64
   --test_ckpt_addr "$CKPT_DEFAULT"
   --fewshot_seed 0
+  --seed 0
   --batch-size 8
   --workers 0
   --cache_features
+  --rebuild_feature_cache
   --feature_cache_dir ./outputs/feature_cache_logofuse
   --fewshot_weight_source support
   --fewshot_support_importance test_affinity
