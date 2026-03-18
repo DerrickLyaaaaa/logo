@@ -2,21 +2,19 @@
 
 Training-free 3D point cloud OOD detection codebase (LoGo-Fuse).
 
-## 1. What is included
+## 1) Repository contents
 
-This repository contains:
+Included:
 - Core code: `main_logofuse.py`, `ood_methods/`, `models/`, `utils/`
-- Dataset configs and label/split metadata: `data/*.yaml`, `data/SR`, `data/SN`, `data/MN`, `data/templates.json`
-- Repro scripts (mainly for ScanObjectNN): `tools/*.sh`
+- Dataset configs and metadata: `data/*.yaml`, `data/SR`, `data/SN`, `data/MN`, `data/templates.json`
+- Repro scripts (ScanObjectNN): `tools/*.sh`
 
-This repository intentionally **does not include**:
-- Large model checkpoint (`*.pt`)
-- Large dataset binaries (`*.dat`)
-- Runtime cache/log outputs
+Not included in GitHub (too large):
+- Checkpoint (`*.pt`)
+- Dataset binaries (`*.dat`)
+- Runtime outputs (`outputs/`, logs)
 
-## 2. Environment setup
-
-Recommended: Python 3.10+ and CUDA-enabled PyTorch.
+## 2) Environment setup
 
 ```bash
 python -m venv .venv
@@ -31,59 +29,68 @@ Install PyTorch separately (example CUDA 11.8):
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-## 3. Required files
+## 3) Download required assets from Google Drive
 
-### 3.1 Checkpoint
+### 3.1 Checkpoint (Google Drive)
 
-Put ULIP checkpoint at repository root (or pass custom path):
+Download:
+- [ULIP-2 checkpoint](https://drive.google.com/open?id=1Kaf6etUyhA4b9NohYmbsJpVT-bQ3iA9p)
 
-- default expected filename:
-  `ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt`
+Place it at repository root with this exact filename:
 
-or run with:
-
-```bash
-export TEST_CKPT_ADDR=/abs/path/to/your_checkpoint.pt
+```text
+ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt
 ```
 
-### 3.2 Dataset `.dat` files
+You can also override path via env var:
 
-Expected locations:
+```bash
+export TEST_CKPT_ADDR=/abs/path/to/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt
+```
 
-- `data/scanobjectnn15_normal_resampled/scanobjectnn15_train_2048pts_fps.dat`
-- `data/scanobjectnn15_normal_resampled/scanobjectnn15_test_2048pts_fps.dat`
-- `data/shapenetcore54_normal_resampled/shapenetcore54_train_4096pts_fps.dat`
-- `data/shapenetcore54_normal_resampled/shapenetcore54_test_4096pts_fps.dat`
-- `data/modelnet40_normal_resampled/modelnet40_train_8192pts_fps.dat`
-- `data/modelnet40_normal_resampled/modelnet40_test_8192pts_fps.dat`
+### 3.2 Dataset `.dat` files (Google Drive)
+
+Download:
+- [LoGo-Fuse DAT bundle](https://drive.google.com/open?id=11rYY2vF2ENqgNsgOQj3FousqAQq_IAmb)
+
+After download, make sure these files exist at the following paths:
+
+```text
+data/scanobjectnn15_normal_resampled/scanobjectnn15_train_2048pts_fps.dat
+data/scanobjectnn15_normal_resampled/scanobjectnn15_test_2048pts_fps.dat
+
+data/shapenetcore54_normal_resampled/shapenetcore54_train_4096pts_fps.dat
+data/shapenetcore54_normal_resampled/shapenetcore54_test_4096pts_fps.dat
+
+data/modelnet40_normal_resampled/modelnet40_train_8192pts_fps.dat
+data/modelnet40_normal_resampled/modelnet40_test_8192pts_fps.dat
+```
 
 Notes:
-- `*_normal_resampled` means normalized + fixed-point sampling preprocessed data.
-- `.txt` / `shape_names` metadata files are already included in this repo.
+- `*_normal_resampled` = normalized + fixed-point preprocessed point clouds.
+- This repo already includes required text metadata (`*_train.txt`, `*_test.txt`, `*_shape_names.txt`).
 
-## 4. Quick start
+## 4) Quick run
 
-### 4.1 ScanObjectNN (recommended reproducibility path)
-
-Zero-shot SR1/SR2/SR3:
+### ScanObjectNN SR1/SR2/SR3 zero-shot
 
 ```bash
 bash tools/run_zeroshot_sr123.sh
 ```
 
-Full-shot SR1/SR2/SR3:
+### ScanObjectNN SR1/SR2/SR3 full-shot
 
 ```bash
 bash tools/run_fullshot_sr123.sh
 ```
 
-K_neg sweep (full-shot):
+### K_neg sweep (full-shot)
 
 ```bash
 bash tools/run_kneg_sweep_fullshot.sh 1 15
 ```
 
-### 4.2 ShapeNet / ModelNet (direct command examples)
+## 5) ShapeNet / ModelNet example commands
 
 ShapeNet zero-shot (SN1):
 
@@ -125,14 +132,14 @@ python main_logofuse.py \
   --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999
 ```
 
-## 5. Outputs
+## 6) Outputs
 
 - Run logs: `logs_*`
-- TSV summaries: inside each `logs_*` directory
+- Summary TSV: under each `logs_*` folder
 - Feature cache: `outputs/feature_cache_logofuse`
 
-## 6. Repro tips
+## 7) Repro tips
 
 - Keep `--fewshot_seed 0` and fixed config for strict reproducibility.
 - If metrics drift, clear `outputs/feature_cache_logofuse` and rerun.
-- For paper tables, record the exact log directory name (`logs_*_YYYYmmdd_HHMMSS`).
+- Keep each run directory name (`logs_*_YYYYmmdd_HHMMSS`) for paper tables.
