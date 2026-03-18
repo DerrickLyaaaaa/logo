@@ -235,157 +235,6 @@ def _rank_corr01(a, b):
     return float(np.clip(0.5 * (corr + 1.0), 0.0, 1.0))
 
 
-def _sinkhorn_uniform(cost, reg=0.05, n_iter=80):
-    """
-    Entropic OT with uniform marginals:
-      a_i = 1/N, b_j = 1/C
-    Returns transport matrix P in shape [N, C].
-    """
-    c = np.asarray(cost, dtype=np.float64)
-    n, m = c.shape
-    if n <= 0 or m <= 0:
-        return np.zeros((n, m), dtype=np.float32)
-    eps = float(max(reg, 1e-6))
-    a = np.full(n, 1.0 / float(n), dtype=np.float64)
-    b = np.full(m, 1.0 / float(m), dtype=np.float64)
-    k = np.exp(-c / eps)
-    k = np.clip(k, 1e-30, None)
-    u = np.full(n, 1.0, dtype=np.float64)
-    v = np.full(m, 1.0, dtype=np.float64)
-    iters = int(max(1, n_iter))
-    for _ in range(iters):
-        kv = k @ v
-        kv = np.clip(kv, 1e-30, None)
-        u = a / kv
-        ktu = k.T @ u
-        ktu = np.clip(ktu, 1e-30, None)
-        v = b / ktu
-    p = (u[:, None] * k) * v[None, :]
-    return p.astype(np.float32)
-
-
-def _compute_ot_global_score(sims_cls, args):
-    """
-    Build OT-based global score:
-      S_sem(i)=max_j Q_ij
-      S_dist(i)=1-sum_j Q_ij*c_ij, c_ij=1-cos
-      S_OT(i)=alpha*S_sem + (1-alpha)*S_dist
-    where Q is row-normalized transport matrix from Sinkhorn.
-    """
-    sims = np.asarray(sims_cls, dtype=np.float32)
-    cost = np.clip(1.0 - sims, 0.0, 2.0)
-    reg = float(max(getattr(args, "ot_reg", 0.05), 1e-6))
-    n_iter = int(max(1, getattr(args, "ot_iters", 80)))
-    alpha = float(np.clip(getattr(args, "ot_alpha", 0.5), 0.0, 1.0))
-
-    p = _sinkhorn_uniform(cost, reg=reg, n_iter=n_iter)
-    row_sum = np.clip(np.sum(p, axis=1, keepdims=True), 1e-12, None)
-    q = p / row_sum
-    s_sem = np.max(q, axis=1).astype(np.float32)
-    s_dist = (1.0 - np.sum(q * cost, axis=1)).astype(np.float32)
-    s_dist = np.clip(s_dist, 0.0, 1.0)
-    s_ot = (alpha * s_sem + (1.0 - alpha) * s_dist).astype(np.float32)
-    return s_ot, s_sem, s_dist
-
-
-def _compute_ot_component_weights(sims_cls_comp, args):
-    """
-    Compute OT-based per-point/per-component weights for one class.
-    sims_cls_comp: [N_c, M] cosine similarities between points and class components.
-    Returns: [N_c, M] non-negative row-normalized transport weights.
-    """
-    sims_cls_comp = np.asarray(sims_cls_comp, dtype=np.float32)
-    if sims_cls_comp.ndim != 2:
-        return np.zeros((0, 0), dtype=np.float32)
-    n, m = sims_cls_comp.shape
-    if n == 0 or m == 0:
-        return np.zeros((n, m), dtype=np.float32)
-
-    cost = np.clip(1.0 - sims_cls_comp, 0.0, 2.0)
-    reg = float(max(getattr(args, "glo_ot_proto_reg", getattr(args, "ot_reg", 0.05)), 1e-6))
-    n_iter = int(max(1, getattr(args, "glo_ot_proto_iters", getattr(args, "ot_iters", 80))))
-    transport = _sinkhorn_uniform(cost, reg=reg, n_iter=n_iter)
-    row_sum = np.clip(np.sum(transport, axis=1, keepdims=True), 1e-12, None)
-    return (transport / row_sum).astype(np.float32)
-
-
-def _build_id_dictionary(h, sims_cls, topk_per_class=2):
-    """
-    Build ID dictionary keys from class-wise top-k confident test samples.
-    Returns normalized dictionary features [M, D] and selected index array.
-    """
-    h = _l2_normalize(np.asarray(h, dtype=np.float32))
-    sims = np.asarray(sims_cls, dtype=np.float32)
-    n, c = sims.shape
-    k = int(max(1, topk_per_class))
-    selected = []
-    for cid in range(c):
-        score_c = sims[:, cid]
-        if n <= k:
-            idx = np.arange(n, dtype=np.int64)
-        else:
-            part = np.argpartition(-score_c, k - 1)[:k]
-            idx = part[np.argsort(-score_c[part])]
-        selected.append(idx.astype(np.int64))
-    if len(selected) == 0:
-        return h.copy(), np.arange(n, dtype=np.int64)
-    idx_all = np.unique(np.concatenate(selected))
-    if idx_all.size <= 0:
-        idx_all = np.arange(n, dtype=np.int64)
-    return _l2_normalize(h[idx_all]), idx_all
-
-
-def _kth_nn_similarity(q, keys, kth=5):
-    """
-    latent inlier score:
-      S_in(x)=cos(k-th nearest ID key, x)
-    """
-    q = _l2_normalize(np.asarray(q, dtype=np.float32))
-    kx = _l2_normalize(np.asarray(keys, dtype=np.float32))
-    if kx.shape[0] <= 0:
-        return np.zeros(q.shape[0], dtype=np.float32)
-    sims = q @ kx.T
-    k = int(max(1, min(int(kth), kx.shape[0])))
-    if kx.shape[0] == 1:
-        return sims[:, 0].astype(np.float32)
-    idx = np.argpartition(-sims, k - 1, axis=1)[:, k - 1]
-    return sims[np.arange(sims.shape[0]), idx].astype(np.float32)
-
-
-def _build_ood_dictionary(h, s_in, s_loc, args):
-    """
-    Build OOD dictionary via priority queue over low latent-inlier score samples.
-    """
-    h = _l2_normalize(np.asarray(h, dtype=np.float32))
-    s_in = np.asarray(s_in, dtype=np.float32).reshape(-1)
-    s_loc = np.asarray(s_loc, dtype=np.float32).reshape(-1)
-    n = int(h.shape[0])
-    pool_frac = float(np.clip(getattr(args, "oodd_ood_pool_frac", 0.15), 1e-4, 0.5))
-    pool_size = int(max(1, min(n, int(round(pool_frac * n)))))
-    low_in_idx = np.argsort(s_in)[:pool_size]
-
-    use_inter = bool(getattr(args, "oodd_use_local_intersection", True))
-    if use_inter:
-        low_loc_idx = np.argsort(s_loc)[:pool_size]
-        pool_idx = np.intersect1d(low_in_idx, low_loc_idx, assume_unique=False)
-        min_keep = int(max(4, pool_size // 4))
-        if pool_idx.size < min_keep:
-            pool_idx = low_in_idx
-    else:
-        pool_idx = low_in_idx
-    pool_idx = np.asarray(pool_idx, dtype=np.int64)
-
-    dict_size = int(max(1, getattr(args, "oodd_ood_dict_size", 64)))
-    dict_size = int(min(dict_size, pool_idx.size))
-    if dict_size <= 0:
-        return np.zeros((0, h.shape[1]), dtype=np.float32), 0, 0
-
-    # Priority queue policy: lower S_in first (more OOD-like).
-    rank = np.argsort(s_in[pool_idx])
-    sel = pool_idx[rank[:dict_size]]
-    return _l2_normalize(h[sel]), int(pool_idx.size), int(dict_size)
-
-
 def _neg_stability_frequency(
     h,
     p_star_flat,
@@ -868,10 +717,6 @@ def _run_global_update_pass(
     stab_min_freq = float(np.clip(getattr(args, "glo_revisit_stab_min_freq", 0.6), 0.0, 1.0))
     use_stab_weight = bool(getattr(args, "glo_revisit_use_stab_weight", True))
     ess_min = float(max(getattr(args, "glo_revisit_ess_min", 0.0), 0.0)) if use_stability else 0.0
-    use_ot_proto_weight = bool(getattr(args, "glo_ot_proto_weight", False))
-    ot_alpha = float(np.clip(getattr(args, "glo_ot_proto_alpha", 1.0), 0.0, 1.0))
-    ot_weight_sum = 0.0
-    ot_weight_count = 0
 
     def _compute_keep_mask(h_view, sims_view, sims_proto_view, y_cls_view, p_mix_view):
         dpam_mask = y_cls_view == y_cluster
@@ -957,16 +802,6 @@ def _run_global_update_pass(
         keep_last = keep
         keep_freq_last = keep_freq.astype(np.float32)
         y_cls_last = y_cls
-        ot_component_weights = [None] * c_in
-        if use_ot_proto_weight:
-            for c in range(c_in):
-                cls_rows_all = np.where(keep & (y_cls == c))[0]
-                if cls_rows_all.size > 0:
-                    cls_prev = p_prev_mix[c]
-                    sims_cls_comp = h[cls_rows_all] @ cls_prev.T
-                    ot_cls = _compute_ot_component_weights(sims_cls_comp, args)
-                    if ot_cls.size > 0:
-                        ot_component_weights[c] = (cls_rows_all, ot_cls)
 
         p_new_mix = p_prev_mix.copy()
         lam_txt = float(np.clip(text_anchor_lambda, 0.0, 1.0))
@@ -974,21 +809,9 @@ def _run_global_update_pass(
         for c in range(c_in):
             cls_rows = np.where(keep & (y_cls == c))[0]
             cls_prev = p_prev_mix[c]
-            rows_to_ot_idx = None
-            ot_w_for_class = None
-            if use_ot_proto_weight and ot_component_weights[c] is not None:
-                rows_to_ot_idx, ot_w_for_class = ot_component_weights[c]
-                rows_to_ot_idx = rows_to_ot_idx.astype(np.int64)
-                ot_w_for_class = np.asarray(ot_w_for_class, dtype=np.float32)
-                if rows_to_ot_idx.size != cls_rows.size:
-                    rows_to_ot_idx = None
-                    ot_w_for_class = None
 
             if cls_rows.size > 0:
                 ess_weights = np.clip(sample_weight[cls_rows], 1e-12, None).astype(np.float32)
-                if use_ot_proto_weight and ot_w_for_class is not None and ot_alpha > 0.0:
-                    w_cls_ot = np.sum(ot_w_for_class, axis=1)
-                    ess_weights = np.clip(ot_alpha * np.clip(w_cls_ot, 1e-12, None) + (1.0 - ot_alpha) * ess_weights, 1e-12, None)
                 ess_cls = float(_ess_from_weights(ess_weights))
                 class_ess_values.append(ess_cls)
                 if ess_min > 0.0 and ess_cls < ess_min:
@@ -1019,44 +842,15 @@ def _run_global_update_pass(
                     top_idx = np.argsort(-rank_score)[:topk_per_proto]
                     rows_m = rows_m[top_idx]
 
-                # Optional OT weight lookup for selected rows of this component.
-                if use_ot_proto_weight and rows_to_ot_idx is not None and ot_w_for_class is not None:
-                    idx = np.searchsorted(rows_to_ot_idx, rows_m)
-                    # rows_to_ot_idx is sorted because it comes from np.where(...).
-                    if np.any(idx < 0) or np.any(idx >= rows_to_ot_idx.size) or np.any(rows_to_ot_idx[idx] != rows_m):
-                        w_ot_m = None
-                    else:
-                        w_ot_m = np.clip(ot_w_for_class[idx, m], 1e-6, None).astype(np.float32)
-                else:
-                    w_ot_m = None
-
                 if rows_m.size > 0:
                     if use_stability and use_stab_weight:
                         w_m = np.clip(sample_weight[rows_m], 1e-6, None).astype(np.float32)
-                        if w_ot_m is not None:
-                            if ot_alpha >= 1.0:
-                                w_m = w_ot_m
-                            else:
-                                w_m = np.clip(ot_alpha * w_ot_m + (1.0 - ot_alpha) * w_m, 1e-6, None).astype(np.float32)
-                            ot_weight_sum += float(np.sum(w_m))
-                            ot_weight_count += int(w_m.size)
-                        mean_h = _l2_normalize(
-                            np.sum(h[rows_m] * w_m[:, None], axis=0, keepdims=True)
-                            / np.clip(np.sum(w_m), 1e-6, None)
-                        )[0]
                     else:
                         w_m = np.ones(rows_m.size, dtype=np.float32)
-                        if w_ot_m is not None:
-                            if ot_alpha >= 1.0:
-                                w_m = w_ot_m
-                            else:
-                                w_m = np.clip(ot_alpha * w_ot_m + (1.0 - ot_alpha) * w_m, 1e-6, None).astype(np.float32)
-                            ot_weight_sum += float(np.sum(w_m))
-                            ot_weight_count += int(w_m.size)
-                        mean_h = _l2_normalize(
-                            np.sum(h[rows_m] * w_m[:, None], axis=0, keepdims=True)
-                            / np.clip(np.sum(w_m), 1e-6, None)
-                        )[0]
+                    mean_h = _l2_normalize(
+                        np.sum(h[rows_m] * w_m[:, None], axis=0, keepdims=True)
+                        / np.clip(np.sum(w_m), 1e-6, None)
+                    )[0]
                     proposal = (1.0 - eta_val) * cls_prev[m] + eta_val * mean_h
                 else:
                     proposal = cls_prev[m]
@@ -1084,7 +878,6 @@ def _run_global_update_pass(
             p_star_mix += omega[t] * traj[t + 1]
         p_star_mix = _l2_normalize(p_star_mix.reshape(c_in * m_proto, d)).reshape(c_in, m_proto, d)
 
-    ot_weight_mean = float(ot_weight_sum / max(1.0, float(ot_weight_count)))
     return p_star_mix, {
         "conf_history": conf_history,
         "keep_last": keep_last,
@@ -1097,11 +890,6 @@ def _run_global_update_pass(
         "class_skip_total": int(class_skip_total),
         "class_ess_mean": float(np.mean(class_ess_values)) if len(class_ess_values) > 0 else 0.0,
         "class_ess_min": float(np.min(class_ess_values)) if len(class_ess_values) > 0 else 0.0,
-        "glo_ot_proto_weight_enabled": bool(use_ot_proto_weight),
-        "glo_ot_proto_alpha": float(ot_alpha),
-        "glo_ot_proto_weight_mean": float(ot_weight_mean),
-        "glo_ot_proto_reg": float(max(getattr(args, "glo_ot_proto_reg", getattr(args, "ot_reg", 0.05)), 1e-6)),
-        "glo_ot_proto_iters": int(max(1, getattr(args, "glo_ot_proto_iters", getattr(args, "ot_iters", 80)))),
     }
 
 
@@ -1142,9 +930,7 @@ def run_logofuse(
 
     n, d = h.shape
     c_in = p0.shape[0]
-    global_score_mode = str(getattr(args, "global_score_mode", "maxcos")).lower()
-    if global_score_mode not in ("maxcos", "ot", "oodd"):
-        global_score_mode = "maxcos"
+    global_score_mode = "maxcos"
 
     if args.dataset_name == "ScanObjectNN15":
         id_mask, id_labels = _split_masks_scanobjectnn15(y_gt, args.dataset_split)
@@ -1253,11 +1039,6 @@ def run_logofuse(
     glo_gate_nr_rate = 0.0
     glo_gate_dgis_rate = 0.0
     glo_gate_keep_rate = 0.0
-    glo_ot_proto_weight_enabled = False
-    glo_ot_proto_alpha = 0.0
-    glo_ot_proto_weight_mean = 0.0
-    glo_ot_proto_reg = float(max(getattr(args, "glo_ot_proto_reg", getattr(args, "ot_reg", 0.05)), 1e-6))
-    glo_ot_proto_iters = int(max(1, getattr(args, "glo_ot_proto_iters", getattr(args, "ot_iters", 80))))
     prev_gap = None
 
     for ridx in range(revisit_rounds):
@@ -1276,12 +1057,6 @@ def run_logofuse(
         )
 
         conf_history.extend(pass_info.get("conf_history", []))
-        if bool(pass_info.get("glo_ot_proto_weight_enabled", False)):
-            glo_ot_proto_weight_enabled = True
-            glo_ot_proto_alpha = float(pass_info.get("glo_ot_proto_alpha", glo_ot_proto_alpha))
-            glo_ot_proto_weight_mean = float(pass_info.get("glo_ot_proto_weight_mean", glo_ot_proto_weight_mean))
-            glo_ot_proto_reg = float(pass_info.get("glo_ot_proto_reg", glo_ot_proto_reg))
-            glo_ot_proto_iters = int(pass_info.get("glo_ot_proto_iters", glo_ot_proto_iters))
         revisit_class_skip_total += int(pass_info.get("class_skip_total", 0))
         revisit_class_ess_mean = float(pass_info.get("class_ess_mean", 0.0))
         revisit_class_ess_min = float(pass_info.get("class_ess_min", 0.0))
@@ -1338,49 +1113,10 @@ def run_logofuse(
         num_classes=c_in,
     )
     s_glo_pos_cos = np.max(sims_star, axis=1).astype(np.float32)
-    s_ot_sem = None
-    s_ot_dist = None
-    oodd_id_dict_size = 0
-    oodd_id_topk = 0
-    oodd_inlier_k = 0
-    oodd_pool_size = 0
-    oodd_ood_dict_size = 0
-    oodd_beta = 0.0
-    oodd_use_local_intersection = False
-    oodd_neg_max_mean = 0.0
-    if global_score_mode == "ot":
-        s_glo_pos, s_ot_sem, s_ot_dist = _compute_ot_global_score(sims_star, args)
-    elif global_score_mode == "oodd":
-        oodd_id_topk = int(max(1, getattr(args, "oodd_id_topk_per_class", 2)))
-        oodd_inlier_k = int(max(1, getattr(args, "oodd_inlier_k", 5)))
-        oodd_beta = float(np.clip(getattr(args, "oodd_beta", 0.5), 0.0, 2.0))
-        oodd_use_local_intersection = bool(getattr(args, "oodd_use_local_intersection", True))
-
-        use_fs_id_dict = bool(getattr(args, "oodd_use_fewshot_id_dict", True))
-        if use_fs_id_dict and fewshot_prototypes is not None and int(getattr(args, "shot", 0)) > 0:
-            id_dict = _l2_normalize(np.asarray(fewshot_prototypes, dtype=np.float32))
-            oodd_id_dict_size = int(id_dict.shape[0])
-        else:
-            id_dict, _ = _build_id_dictionary(h, sims_star, topk_per_class=oodd_id_topk)
-            oodd_id_dict_size = int(id_dict.shape[0])
-
-        s_in = _kth_nn_similarity(h, id_dict, kth=oodd_inlier_k)
-        ood_dict, oodd_pool_size, oodd_ood_dict_size = _build_ood_dictionary(h, s_in, s_loc, args)
-        if oodd_ood_dict_size > 0:
-            s_ood_max = np.max(h @ ood_dict.T, axis=1).astype(np.float32)
-            oodd_neg_max_mean = float(np.mean(s_ood_max))
-        else:
-            s_ood_max = np.zeros(n, dtype=np.float32)
-            oodd_neg_max_mean = 0.0
-
-        s_glo_pos = s_in.astype(np.float32)
-        s_glo_raw = (s_in - oodd_beta * s_ood_max).astype(np.float32)
-    else:
-        s_glo_pos = s_glo_pos_cos.copy()
-        s_glo_raw = s_glo_pos.copy()
+    s_glo_pos = s_glo_pos_cos.copy()
+    s_glo_raw = s_glo_pos.copy()
     m_glo_raw = _top2_margin(sims_star)
-    if global_score_mode != "oodd":
-        s_glo_raw = s_glo_pos.copy()
+    s_glo_raw = s_glo_pos.copy()
     tta_info = _tta_consistency(
         h,
         p_star_flat,
@@ -1860,11 +1596,6 @@ def run_logofuse(
         "glo_gate_nr_rate": float(glo_gate_nr_rate),
         "glo_gate_dgis_rate": float(glo_gate_dgis_rate),
         "glo_gate_keep_rate": float(glo_gate_keep_rate),
-        "glo_ot_proto_weight_enabled": bool(glo_ot_proto_weight_enabled),
-        "glo_ot_proto_alpha": float(glo_ot_proto_alpha),
-        "glo_ot_proto_weight_mean": float(glo_ot_proto_weight_mean),
-        "glo_ot_proto_reg": float(glo_ot_proto_reg),
-        "glo_ot_proto_iters": int(glo_ot_proto_iters),
         "local_top1_mean": float(np.mean(local_top1)),
         "local_margin_mean": float(np.mean(local_margin)),
         "local_entropy_mean": float(np.mean(local_entropy)),
@@ -1875,19 +1606,6 @@ def run_logofuse(
         "s_glo": s_glo,
         "s_glo_pos": s_glo_pos,
         "global_score_mode": str(global_score_mode),
-        "ot_alpha": float(np.clip(getattr(args, "ot_alpha", 0.5), 0.0, 1.0)) if global_score_mode == "ot" else 0.0,
-        "ot_reg": float(max(getattr(args, "ot_reg", 0.05), 1e-6)) if global_score_mode == "ot" else 0.0,
-        "ot_iters": int(max(1, getattr(args, "ot_iters", 80))) if global_score_mode == "ot" else 0,
-        "ot_sem_mean": float(np.mean(s_ot_sem)) if s_ot_sem is not None else 0.0,
-        "ot_dist_mean": float(np.mean(s_ot_dist)) if s_ot_dist is not None else 0.0,
-        "oodd_id_dict_size": int(oodd_id_dict_size),
-        "oodd_id_topk_per_class": int(oodd_id_topk),
-        "oodd_inlier_k": int(oodd_inlier_k),
-        "oodd_ood_pool_size": int(oodd_pool_size),
-        "oodd_ood_dict_size": int(oodd_ood_dict_size),
-        "oodd_beta": float(oodd_beta),
-        "oodd_use_local_intersection": bool(oodd_use_local_intersection),
-        "oodd_neg_max_mean": float(oodd_neg_max_mean),
         "glo_mixture_used": bool(mixture_used),
         "glo_num_proto_per_class": int(m_proto),
         "glo_multi_class_count": int(np.sum(class_multi_mask)),
