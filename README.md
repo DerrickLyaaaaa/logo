@@ -70,75 +70,87 @@ Notes:
 - `*_normal_resampled` = normalized + fixed-point preprocessed point clouds.
 - This repo already includes required text metadata (`*_train.txt`, `*_test.txt`, `*_shape_names.txt`).
 
-## 4) Quick run
+## 4) Benchmark tracks
 
-### ScanObjectNN SR1/SR2/SR3 zero-shot
+This repository is organized into three benchmark tracks:
+
+1. **Synthetic**: ShapeNetCore54 in-domain (SN1/SN2/SN3).
+2. **Synthetic-to-Real**: ModelNet support (synthetic) + ScanObjectNN test (real).
+3. **Real-to-Real**: ScanObjectNN in-domain (SR1/SR2/SR3).
+
+### 4.1 Synthetic (ShapeNetCore54)
+
+Zero-shot (SN1):
+
+```bash
+python main_logofuse.py \
+  --model ULIP_PointBERT --method logofuse --evaluate_3d \
+  --dataset_name ShapeNetCore54 --dataset_split SN1 \
+  --npoints 4096 --validate_dataset_prompt shapenet_64 \
+  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 0
+```
+
+Full-shot (SN1):
+
+```bash
+python main_logofuse.py \
+  --model ULIP_PointBERT --method logofuse --evaluate_3d \
+  --dataset_name ShapeNetCore54 --dataset_split SN1 \
+  --npoints 4096 --validate_dataset_prompt shapenet_64 \
+  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999
+```
+
+### 4.2 Synthetic-to-Real (ModelNet support -> ScanObjectNN test)
+
+This track must satisfy:
+
+- **Support/Train source = ModelNet (synthetic)**
+- **Test target = ScanObjectNN (real)**
+- Do **not** switch test to ModelNet.
+
+Use `dataset_name=ScanObjectNN15` for evaluation target, and inject synthetic support via custom train `.dat`:
+
+```bash
+python main_logofuse.py \
+  --model ULIP_PointBERT --method logofuse --evaluate_3d \
+  --dataset_name ScanObjectNN15 --dataset_split SR1 \
+  --npoints 2048 --validate_dataset_prompt shapenet_64 \
+  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999 \
+  --scanobject_train_dat /abs/path/to/modelnet_as_support_train.dat
+```
+
+Important:
+
+- `--scanobject_train_dat` must be a **support dat prepared for ScanObject-compatible label space**.
+- Test remains ScanObject default test split (or optional `--scanobject_test_dat` if explicitly overridden).
+
+### 4.3 Real-to-Real (ScanObjectNN)
+
+Zero-shot (SR1/SR2/SR3):
 
 ```bash
 bash tools/run_zeroshot_sr123.sh
 ```
 
-### ScanObjectNN SR1/SR2/SR3 full-shot
+Full-shot (SR1/SR2/SR3):
 
 ```bash
 bash tools/run_fullshot_sr123.sh
 ```
 
-### K_neg sweep (full-shot)
+K_neg sweep (full-shot):
 
 ```bash
 bash tools/run_kneg_sweep_fullshot.sh 1 15
 ```
 
-## 5) ShapeNet / ModelNet example commands
-
-ShapeNet zero-shot (SN1):
-
-```bash
-python main_logofuse.py \
-  --model ULIP_PointBERT --method logofuse --evaluate_3d \
-  --dataset_name ShapeNetCore54 --dataset_split SN1 \
-  --npoints 4096 --validate_dataset_prompt shapenet_64 \
-  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 0
-```
-
-ShapeNet full-shot (SN1):
-
-```bash
-python main_logofuse.py \
-  --model ULIP_PointBERT --method logofuse --evaluate_3d \
-  --dataset_name ShapeNetCore54 --dataset_split SN1 \
-  --npoints 4096 --validate_dataset_prompt shapenet_64 \
-  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999
-```
-
-ModelNet zero-shot (MN1):
-
-```bash
-python main_logofuse.py \
-  --model ULIP_PointBERT --method logofuse --evaluate_3d \
-  --dataset_name ModelNet40 --dataset_split MN1 \
-  --npoints 8192 --validate_dataset_prompt shapenet_64 \
-  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 0
-```
-
-ModelNet full-shot (MN1):
-
-```bash
-python main_logofuse.py \
-  --model ULIP_PointBERT --method logofuse --evaluate_3d \
-  --dataset_name ModelNet40 --dataset_split MN1 \
-  --npoints 8192 --validate_dataset_prompt shapenet_64 \
-  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999
-```
-
-## 6) Outputs
+## 5) Outputs
 
 - Run logs: `logs_*`
 - Summary TSV: under each `logs_*` folder
 - Feature cache: `outputs/feature_cache_logofuse`
 
-## 7) Repro tips
+## 6) Repro tips
 
 - Use fixed seeds and solver for paper runs:
   - `--seed 0`
