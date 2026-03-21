@@ -10,11 +10,27 @@ if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
 else
   PYTHON_BIN="${PYTHON_BIN:-python}"
 fi
+
+SUPPORT_DAT="${1:-${SCANOBJECT_TRAIN_DAT:-}}"
+if [[ -z "$SUPPORT_DAT" ]]; then
+  echo "Usage: bash tools/run_synth2real_sr12.sh /abs/path/to/modelnet_as_support_train.dat" >&2
+  exit 1
+fi
+if [[ ! -f "$SUPPORT_DAT" ]]; then
+  echo "Support dat not found: $SUPPORT_DAT" >&2
+  exit 1
+fi
+
 CKPT_DEFAULT="${TEST_CKPT_ADDR:-$ROOT_DIR/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt}"
 TS=$(date +%Y%m%d_%H%M%S)
-OD="${OD:-logs_zeroshot_sr123_${TS}}"
+OD="${OD:-logs_synth2real_sr12_${TS}}"
 mkdir -p "$OD"
 printf "split\tAUROC\tFPR95\tw_star\n" > "$OD/results.tsv"
+
+TEST_ARGS=()
+if [[ -n "${SCANOBJECT_TEST_DAT:-}" ]]; then
+  TEST_ARGS=(--scanobject_test_dat "$SCANOBJECT_TEST_DAT")
+fi
 
 COMMON=(
   --model ULIP_PointBERT
@@ -29,7 +45,8 @@ COMMON=(
   --workers 0
   --cache_features
   --feature_cache_dir ./outputs/feature_cache_logofuse
-  --fewshot_weight_source pseudo
+  --fewshot_weight_source support
+  --fewshot_support_importance test_affinity
   --fewshot_weight_solver map
   --fewshot_weight_cap 0.3
   --local_method lp_softmax
@@ -54,13 +71,14 @@ COMMON=(
   --no_glo_use_iterative_revisit
   --no_neg_stab_enable
   --fusion_weight_solver mse
-  --shot 0
+  --shot 999999
+  --scanobject_train_dat "$SUPPORT_DAT"
 )
 
-for split in SR1 SR2 SR3; do
+for split in SR1 SR2; do
   log="$OD/${split}.log"
-  echo "[RUN] split=$split shot=0"
-  "$PYTHON_BIN" main_logofuse.py "${COMMON[@]}" --dataset_split "$split" > "$log" 2>&1
+  echo "[RUN] split=$split support=$SUPPORT_DAT"
+  "$PYTHON_BIN" main_logofuse.py "${COMMON[@]}" "${TEST_ARGS[@]}" --dataset_split "$split" > "$log" 2>&1
   "$PYTHON_BIN" - "$log" "$split" >> "$OD/results.tsv" <<'PY'
 import re,sys
 log,split=sys.argv[1:3]

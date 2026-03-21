@@ -1,20 +1,33 @@
 # LoGo-Fuse
 
-Training-free 3D point cloud OOD detection codebase (LoGo-Fuse).
+LoGo-Fuse is a training-free 3D point cloud OOD detection codebase built on frozen ULIP-2 features.
 
-## 1) Repository contents
+This public repository keeps the cleaned mainline only:
+- local graph propagation
+- global prototype refinement
+- negative prototype bank
+- scalar local/global fusion
+
+Historical experimental branches such as `gsp_ot`, old OT/OODD scoring, geometry-side fusion branches, and legacy few-shot prototype clustering variants are not part of the intended public workflow.
+
+## Repository Contents
 
 Included:
-- Core code: `main_logofuse.py`, `ood_methods/`, `models/`, `utils/`
-- Dataset configs and metadata: `data/*.yaml`, `data/SR`, `data/SN`, `data/MN`, `data/templates.json`
-- Repro scripts (ScanObjectNN): `tools/*.sh`
+- `main_logofuse.py`
+- `ood_methods/`, `models/`, `utils/`
+- `data/` metadata and dataset configs
+- `tools/` helper scripts
 
-Not included in GitHub (too large):
-- Checkpoint (`*.pt`)
-- Dataset binaries (`*.dat`)
-- Runtime outputs (`outputs/`, logs)
+Not included in GitHub:
+- checkpoints (`*.pt`, `*.pth`)
+- dataset binaries (`*.dat`)
+- runtime caches and logs (`outputs/`, `logs_*`)
 
-## 2) Environment setup
+## Environment
+
+Python 3.10+ is recommended.
+
+CUDA is required for ULIP-2 evaluation in this repository.
 
 ```bash
 python -m venv .venv
@@ -23,37 +36,45 @@ pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-Install PyTorch separately (example CUDA 11.8):
+Install PyTorch separately for your CUDA version. Example for CUDA 11.8:
 
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-## 3) Download required assets from Google Drive
+Optional acceleration for PointBERT KNN:
 
-### 3.1 Checkpoint (Google Drive)
+```bash
+pip install --no-build-isolation git+https://github.com/unlimblue/KNN_CUDA.git
+```
 
-Download:
+If `knn_cuda` is not installed, LoGo-Fuse falls back to the built-in torch KNN implementation.
+
+## Required Assets
+
+### Checkpoint
+
+Download the ULIP-2 checkpoint:
 - [ULIP-2 checkpoint](https://drive.google.com/open?id=1Kaf6etUyhA4b9NohYmbsJpVT-bQ3iA9p)
 
-Place it at repository root with this exact filename:
+Place it at the repository root as:
 
 ```text
 ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt
 ```
 
-You can also override path via env var:
+or override with:
 
 ```bash
 export TEST_CKPT_ADDR=/abs/path/to/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt
 ```
 
-### 3.2 Dataset `.dat` files (Google Drive)
+### Dataset `.dat` bundle
 
-Download:
+Download the dat bundle:
 - [LoGo-Fuse DAT bundle](https://drive.google.com/open?id=11rYY2vF2ENqgNsgOQj3FousqAQq_IAmb)
 
-After download, make sure these files exist at the following paths:
+Expected paths:
 
 ```text
 data/scanobjectnn15_normal_resampled/scanobjectnn15_train_2048pts_fps.dat
@@ -66,21 +87,19 @@ data/modelnet40_normal_resampled/modelnet40_train_8192pts_fps.dat
 data/modelnet40_normal_resampled/modelnet40_test_8192pts_fps.dat
 ```
 
-Notes:
-- `*_normal_resampled` = normalized + fixed-point preprocessed point clouds.
-- This repo already includes required text metadata (`*_train.txt`, `*_test.txt`, `*_shape_names.txt`).
+The repository already includes the required lightweight metadata such as:
+- `data/templates.json`
+- `data/labels.json`
+- `data/SR`, `data/SN`, `data/MN`
+- `*_train.txt`, `*_test.txt`, `*_shape_names.txt`
 
-## 4) Benchmark tracks
+## Benchmark Tracks
 
-This repository is organized into three benchmark tracks:
+This repository currently documents three evaluation tracks.
 
-1. **Synthetic**: ShapeNetCore54 in-domain (SN1/SN2/SN3).
-2. **Synthetic-to-Real**: ModelNet support (synthetic) + ScanObjectNN test (real).
-3. **Real-to-Real**: ScanObjectNN in-domain (SR1/SR2/SR3).
+### 1. Synthetic: ShapeNetCore54
 
-### 4.1 Synthetic (ShapeNetCore54)
-
-Zero-shot (SN1):
+Zero-shot example (`SN1`):
 
 ```bash
 python main_logofuse.py \
@@ -90,7 +109,7 @@ python main_logofuse.py \
   --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 0
 ```
 
-Full-shot (SN1):
+Full-shot example (`SN1`):
 
 ```bash
 python main_logofuse.py \
@@ -100,62 +119,74 @@ python main_logofuse.py \
   --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999
 ```
 
-### 4.2 Synthetic-to-Real (ModelNet support -> ScanObjectNN test)
+### 2. Synthetic-to-Real: ModelNet support -> ScanObjectNN test
 
-This track must satisfy:
+Officially this track is used for `SR1` and `SR2`.
 
-- **Support/Train source = ModelNet (synthetic)**
-- **Test target = ScanObjectNN (real)**
-- Do **not** switch test to ModelNet.
+The target/eval dataset remains `ScanObjectNN15`. Synthetic support is injected through a custom train `.dat` via `--scanobject_train_dat`.
 
-Use `dataset_name=ScanObjectNN15` for evaluation target, and inject synthetic support via custom train `.dat`:
+The support `.dat` must already be prepared in a **ScanObject-compatible label space**.
+
+Helper script:
 
 ```bash
-python main_logofuse.py \
-  --model ULIP_PointBERT --method logofuse --evaluate_3d \
-  --dataset_name ScanObjectNN15 --dataset_split SR1 \
-  --npoints 2048 --validate_dataset_prompt shapenet_64 \
-  --test_ckpt_addr "${TEST_CKPT_ADDR}" --shot 999999 \
-  --scanobject_train_dat /abs/path/to/modelnet_as_support_train.dat
+bash tools/run_synth2real_sr12.sh /abs/path/to/modelnet_as_support_train.dat
 ```
 
-Important:
+Optional override for the ScanObject test dat:
 
-- `--scanobject_train_dat` must be a **support dat prepared for ScanObject-compatible label space**.
-- Test remains ScanObject default test split (or optional `--scanobject_test_dat` if explicitly overridden).
+```bash
+SCANOBJECT_TEST_DAT=/abs/path/to/scanobject_test.dat \
+  bash tools/run_synth2real_sr12.sh /abs/path/to/modelnet_as_support_train.dat
+```
 
-### 4.3 Real-to-Real (ScanObjectNN)
+### 3. Real-to-Real: ScanObjectNN15
 
-Zero-shot (SR1/SR2/SR3):
+Zero-shot (`SR1/SR2/SR3`):
 
 ```bash
 bash tools/run_zeroshot_sr123.sh
 ```
 
-Full-shot (SR1/SR2/SR3):
+Full-shot (`SR1/SR2/SR3`):
 
 ```bash
 bash tools/run_fullshot_sr123.sh
 ```
 
-K_neg sweep (full-shot):
+Negative-bank sweep (`K_neg`, full-shot):
 
 ```bash
 bash tools/run_kneg_sweep_fullshot.sh 1 15
 ```
 
-## 5) Outputs
+## Verified Results
 
-- Run logs: `logs_*`
-- Summary TSV: under each `logs_*` folder
-- Feature cache: `outputs/feature_cache_logofuse`
+These numbers were re-verified with the cleaned mainline configuration.
 
-## 6) Repro tips
+### ScanObjectNN15 full-shot
 
-- Use fixed seeds and solver for paper runs:
-  - `--seed 0`
-  - `--fewshot_seed 0`
-  - `--fewshot_weight_solver map`
-- Use `--rebuild_feature_cache` to force cache rebuild each run (recommended for strict reproducibility).
-- The provided `tools/run_*` scripts already include fixed seed + map solver + cache rebuild.
-- Keep each run directory name (`logs_*_YYYYmmdd_HHMMSS`) for paper tables.
+- `SR1`: `AUROC 0.930279`, `FPR95 0.306383`
+- `SR2`: `AUROC 0.919289`, `FPR95 0.369697`
+- `SR3`: `AUROC 0.859724`, `FPR95 0.530387`
+- `Macro Average`: `AUROC 0.903097`, `FPR95 0.402156`
+
+### ShapeNetCore54 full-shot
+
+- `SN1`: `AUROC 0.913809`, `FPR95 0.464525`
+- `SN2`: `AUROC 0.932384`, `FPR95 0.338373`
+- `SN3`: `AUROC 0.963097`, `FPR95 0.248195`
+- `Macro Average`: `AUROC 0.936430`, `FPR95 0.350364`
+
+## Outputs
+
+- logs: `logs_*`
+- per-run summaries: `results.tsv`, `summary.tsv`
+- feature cache: `outputs/feature_cache_logofuse*`
+
+## Repro Notes
+
+- The helper scripts prefer `./.venv/bin/python` when present.
+- Full-shot support comes from the packaged train split, or from `--scanobject_train_dat` in the Synth-to-Real track.
+- Zero-shot uses the same pipeline with `--shot 0`.
+- The public scripts are aligned with the cleaned mainline configuration and do not rely on removed historical flags.

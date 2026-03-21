@@ -7,7 +7,11 @@ cd "$ROOT_DIR"
 
 K_START="${1:-1}"
 K_END="${2:-15}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
+else
+  PYTHON_BIN="${PYTHON_BIN:-python}"
+fi
 CKPT_DEFAULT="${TEST_CKPT_ADDR:-$ROOT_DIR/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt}"
 TS=$(date +%Y%m%d_%H%M%S)
 OD="${OD:-logs_kneg_fullshot_sr123_k${K_START}_k${K_END}_${TS}}"
@@ -28,11 +32,9 @@ for neg_k in $(seq "$K_START" "$K_END"); do
       --validate_dataset_prompt shapenet_64 \
       --test_ckpt_addr "$CKPT_DEFAULT" \
       --fewshot_seed 0 \
-      --seed 0 \
       --batch-size 8 \
       --workers 0 \
       --cache_features \
-      --rebuild_feature_cache \
       --feature_cache_dir ./outputs/feature_cache_logofuse \
       --fewshot_weight_source support \
       --fewshot_support_importance test_affinity \
@@ -49,8 +51,6 @@ for neg_k in $(seq "$K_START" "$K_END"); do
       --neg_adaptive_margin \
       --tta_views 8 \
       --no_tta_filter_neg_pool \
-      --fewshot_proto_cluster_mode fixed \
-      --fewshot_proto_cluster_k 1 \
       --neg_rank_shot_aware \
       --neg_rank_ref_shot 5 \
       --neg_rank_r0 0.2 \
@@ -62,7 +62,6 @@ for neg_k in $(seq "$K_START" "$K_END"); do
       --no_glo_use_iterative_revisit \
       --no_neg_stab_enable \
       --fusion_weight_solver mse \
-      --global_score_mode maxcos \
       --shot 999999 > "$log" 2>&1
 
     "$PYTHON_BIN" - "$log" "$neg_k" "$split" >> "$OD/results.tsv" <<'PY'

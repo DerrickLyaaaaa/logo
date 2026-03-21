@@ -5,7 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
+else
+  PYTHON_BIN="${PYTHON_BIN:-python}"
+fi
 CKPT_DEFAULT="${TEST_CKPT_ADDR:-$ROOT_DIR/ULIP-2-PointBERT-8k-xyz-pc-slip_vit_b-objaverse-pretrained.pt}"
 TS=$(date +%Y%m%d_%H%M%S)
 OD="${OD:-logs_fullshot_sr123_${TS}}"
@@ -21,11 +25,9 @@ COMMON=(
   --validate_dataset_prompt shapenet_64
   --test_ckpt_addr "$CKPT_DEFAULT"
   --fewshot_seed 0
-  --seed 0
   --batch-size 8
   --workers 0
   --cache_features
-  --rebuild_feature_cache
   --feature_cache_dir ./outputs/feature_cache_logofuse
   --fewshot_weight_source support
   --fewshot_support_importance test_affinity
@@ -42,8 +44,6 @@ COMMON=(
   --neg_adaptive_margin
   --tta_views 8
   --no_tta_filter_neg_pool
-  --fewshot_proto_cluster_mode fixed
-  --fewshot_proto_cluster_k 1
   --neg_rank_shot_aware
   --neg_rank_ref_shot 5
   --neg_rank_r0 0.2
@@ -55,7 +55,6 @@ COMMON=(
   --no_glo_use_iterative_revisit
   --no_neg_stab_enable
   --fusion_weight_solver mse
-  --global_score_mode maxcos
   --shot 999999
 )
 

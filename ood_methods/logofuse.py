@@ -494,6 +494,19 @@ def _split_masks_scanobjectnn15(targets, split):
     return id_mask, id_labels
 
 
+def _split_masks_scanobjectnn15_official_synth2real(targets, split):
+    targets = np.asarray(targets, dtype=np.int64)
+    if split == "SR1":
+        id_mask = (targets >= 0) & (targets <= 4)
+        id_labels = np.arange(0, 5, dtype=np.int64)
+    elif split == "SR2":
+        id_mask = (targets >= 0) & (targets <= 3)
+        id_labels = np.arange(0, 4, dtype=np.int64)
+    else:
+        raise ValueError(f"Unsupported official synth-to-real ScanObjectNN15 split: {split}")
+    return id_mask, id_labels
+
+
 def _split_masks_shapenetcore54(targets, split):
     targets = np.asarray(targets, dtype=np.int64)
     if split == "SN1":
@@ -900,7 +913,6 @@ def run_logofuse(
     args,
     fewshot_prototypes=None,
     fusion_weight_override=None,
-    geo_score=None,
     train_anchor_features=None,
 ):
     """
@@ -930,10 +942,12 @@ def run_logofuse(
 
     n, d = h.shape
     c_in = p0.shape[0]
-    global_score_mode = "maxcos"
 
     if args.dataset_name == "ScanObjectNN15":
-        id_mask, id_labels = _split_masks_scanobjectnn15(y_gt, args.dataset_split)
+        if bool(getattr(args, "synth2real_official_protocol", False)):
+            id_mask, id_labels = _split_masks_scanobjectnn15_official_synth2real(y_gt, args.dataset_split)
+        else:
+            id_mask, id_labels = _split_masks_scanobjectnn15(y_gt, args.dataset_split)
     elif args.dataset_name == "ShapeNetCore54":
         id_mask, id_labels = _split_masks_shapenetcore54(y_gt, args.dataset_split)
     elif args.dataset_name == "ModelNet40":
@@ -1529,32 +1543,9 @@ def run_logofuse(
                 w_scalar = max(w_scalar, min(w_floor, w_cap))
         w_scalar = float(np.clip(w_scalar, 0.0, 1.0))
 
-    w_min_sw = 0.0
     w_star = w_scalar
     w_vec = np.full(n, w_scalar, dtype=np.float32)
     id_score = w_star * s_loc + (1.0 - w_star) * s_glo
-    geo_used = False
-    geo_weight = 0.0
-    geo_weight_mean = 0.0
-    geo_weight_std = 0.0
-    s_geo = None
-    if bool(getattr(args, "use_geo_signal", False)) and geo_score is not None:
-        g = np.asarray(geo_score, dtype=np.float32).reshape(-1)
-        if g.shape[0] == n:
-            s_geo = np.clip(_minmax01(g), 0.0, 1.0).astype(np.float32)
-            geo_weight = float(np.clip(getattr(args, "geo_fusion_weight", 0.20), 0.0, 1.0))
-            if geo_weight > 1e-8:
-                if bool(getattr(args, "geo_adaptive_weight", True)):
-                    p = float(max(getattr(args, "geo_adaptive_power", 1.0), 1e-6))
-                    floor = float(np.clip(getattr(args, "geo_adaptive_floor", 0.0), 0.0, 1.0))
-                    conf = np.clip(s_glo_pos, 0.0, 1.0).astype(np.float32)
-                    geo_w_vec = geo_weight * np.clip(np.power(1.0 - conf, p), floor, 1.0)
-                else:
-                    geo_w_vec = np.full(n, geo_weight, dtype=np.float32)
-                id_score = (1.0 - geo_w_vec) * id_score + geo_w_vec * s_geo
-                geo_weight_mean = float(np.mean(geo_w_vec))
-                geo_weight_std = float(np.std(geo_w_vec))
-                geo_used = True
     ood_score = 1.0 - id_score
 
     y_true_ood = (~id_mask).astype(np.int64)
@@ -1605,7 +1596,6 @@ def run_logofuse(
         "s_loc": s_loc,
         "s_glo": s_glo,
         "s_glo_pos": s_glo_pos,
-        "global_score_mode": str(global_score_mode),
         "glo_mixture_used": bool(mixture_used),
         "glo_num_proto_per_class": int(m_proto),
         "glo_multi_class_count": int(np.sum(class_multi_mask)),
@@ -1644,11 +1634,6 @@ def run_logofuse(
         "tta_filter_used": tta_filter_used,
         "tta_pool_size": int(tta_pool_size),
         "graph_edge_count": int(graph_edge_count),
-        "geo_used": bool(geo_used),
-        "geo_weight": float(geo_weight),
-        "geo_weight_mean": float(geo_weight_mean),
-        "geo_weight_std": float(geo_weight_std),
-        "s_geo": s_geo,
         "id_score": id_score,
         "ood_score": ood_score,
         "y_true_ood": y_true_ood,
