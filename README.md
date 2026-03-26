@@ -187,6 +187,8 @@ These numbers were re-verified with the cleaned mainline configuration.
 ## Repro Notes
 
 - The helper scripts prefer `./.venv/bin/python` when present.
+- The public helper scripts force `--rebuild_feature_cache` by default. This avoids stale cached features from older runs or changed code paths from contaminating final metrics.
+- If you run commands manually with `--cache_features`, prefer pairing it with `--rebuild_feature_cache` for any formal reproduction run.
 - Full-shot support comes from the packaged train split, or from `--scanobject_train_dat` in the Synth-to-Real track.
 - Zero-shot uses the same pipeline with `--shot 0`.
 - The public scripts are aligned with the cleaned mainline configuration and do not rely on removed historical flags.
